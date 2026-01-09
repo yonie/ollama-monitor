@@ -2,7 +2,7 @@
 
 A lightweight, console-based monitoring tool for [Ollama](https://ollama.ai/) on Windows. Inspired by Linux `top`, it provides real-time visibility into your local LLM inference server.
 
-![Screenshot placeholder]
+![Screenshot](screenshot.png)
 
 ## Features
 
