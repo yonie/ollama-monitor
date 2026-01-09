@@ -26,14 +26,21 @@ ConsoleUI::ConsoleUI() : refresh_rate_(1), no_clear_(false) {
 ConsoleUI::~ConsoleUI() {
 }
 
-void ConsoleUI::clearScreen() {
-#ifdef _WIN32
-    // Use ANSI escape codes for clearing
-    std::cout << "\033[2J\033[H";
-#else
-    std::cout << "\033[2J\033[H";
-#endif
+void ConsoleUI::moveCursorHome() {
+    // Move cursor to top-left without clearing - prevents flicker
+    std::cout << "\033[H";
     std::cout.flush();
+}
+
+void ConsoleUI::clearToEndOfScreen() {
+    // Clear from cursor to end of screen - removes any leftover content
+    std::cout << "\033[J";
+    std::cout.flush();
+}
+
+void ConsoleUI::clearLine() {
+    // Clear from cursor to end of line
+    std::cout << "\033[K";
 }
 
 std::string ConsoleUI::formatBytes(int64_t bytes) const {
@@ -133,68 +140,103 @@ std::string ConsoleUI::getProgressBar(double percentage, int width) const {
     return bar;
 }
 
-void ConsoleUI::displayGPUInfo(const GPUInfo& gpu_info) {
+void ConsoleUI::displayGPUInfo(const std::vector<GPUInfo>& gpu_infos) {
     std::cout << "\033[1;36m";  // Cyan bold
-    std::cout << "=== GPU Status ===\033[0m\n";
+    std::cout << "=== GPU Status ===\033[0m";
+    clearLine();
+    std::cout << "\n";
     
-    if (!gpu_info.available) {
-        std::cout << "\033[33m  GPU monitoring unavailable (NVML not found)\033[0m\n";
+    if (gpu_infos.empty()) {
+        std::cout << "\033[33m  GPU monitoring unavailable (NVML not found)\033[0m";
+        clearLine();
+        std::cout << "\n";
         return;
     }
     
-    // GPU Name
-    std::cout << "  \033[1mGPU:\033[0m " << gpu_info.name << "\n";
-    
-    // VRAM Usage
-    double vram_percent = gpu_info.getVRAMUsagePercent();
-    std::cout << "  \033[1mVRAM:\033[0m ";
-    
-    // Color code based on usage
-    if (vram_percent > 90) {
-        std::cout << "\033[31m";  // Red
-    } else if (vram_percent > 70) {
-        std::cout << "\033[33m";  // Yellow
-    } else {
-        std::cout << "\033[32m";  // Green
+    for (size_t idx = 0; idx < gpu_infos.size(); idx++) {
+        const auto& gpu_info = gpu_infos[idx];
+        
+        if (!gpu_info.available) {
+            continue;
+        }
+        
+        // GPU Name with index for multi-GPU systems
+        if (gpu_infos.size() > 1) {
+            std::cout << "  \033[1mGPU " << gpu_info.index << ":\033[0m " << gpu_info.name;
+        } else {
+            std::cout << "  \033[1mGPU:\033[0m " << gpu_info.name;
+        }
+        clearLine();
+        std::cout << "\n";
+        
+        // VRAM Usage
+        double vram_percent = gpu_info.getVRAMUsagePercent();
+        std::cout << "  \033[1mVRAM:\033[0m ";
+        
+        // Color code based on usage
+        if (vram_percent > 90) {
+            std::cout << "\033[31m";  // Red
+        } else if (vram_percent > 70) {
+            std::cout << "\033[33m";  // Yellow
+        } else {
+            std::cout << "\033[32m";  // Green
+        }
+        
+        std::cout << getProgressBar(vram_percent, 30) << " ";
+        std::cout << std::fixed << std::setprecision(1) << vram_percent << "% ";
+        std::cout << "(" << std::setprecision(2) << gpu_info.used_vram_gb << "/"
+                  << gpu_info.total_vram_gb << " GB)\033[0m";
+        clearLine();
+        std::cout << "\n";
+        
+        // GPU Utilization
+        std::cout << "  \033[1mUtil:\033[0m ";
+        if (gpu_info.utilization_percent > 90) {
+            std::cout << "\033[31m";
+        } else if (gpu_info.utilization_percent > 50) {
+            std::cout << "\033[33m";
+        } else {
+            std::cout << "\033[32m";
+        }
+        std::cout << getProgressBar(gpu_info.utilization_percent, 30) << " "
+                  << std::fixed << std::setprecision(0) << gpu_info.utilization_percent << "%\033[0m";
+        clearLine();
+        std::cout << "\n";
+        
+        // Temperature & Power
+        std::cout << "  \033[1mTemp:\033[0m ";
+        if (gpu_info.temperature_c > 80) {
+            std::cout << "\033[31m";
+        } else if (gpu_info.temperature_c > 60) {
+            std::cout << "\033[33m";
+        } else {
+            std::cout << "\033[32m";
+        }
+        std::cout << gpu_info.temperature_c << " C\033[0m  ";
+        
+        std::cout << "\033[1mPower:\033[0m " << gpu_info.power_watts << " W";
+        clearLine();
+        std::cout << "\n";
+        
+        // Add a blank line between GPUs if there are multiple
+        if (gpu_infos.size() > 1 && idx < gpu_infos.size() - 1) {
+            clearLine();
+            std::cout << "\n";
+        }
     }
-    
-    std::cout << getProgressBar(vram_percent, 30) << " ";
-    std::cout << std::fixed << std::setprecision(1) << vram_percent << "% ";
-    std::cout << "(" << std::setprecision(2) << gpu_info.used_vram_gb << "/"
-              << gpu_info.total_vram_gb << " GB)\033[0m\n";
-    
-    // GPU Utilization
-    std::cout << "  \033[1mUtil:\033[0m ";
-    if (gpu_info.utilization_percent > 90) {
-        std::cout << "\033[31m";
-    } else if (gpu_info.utilization_percent > 50) {
-        std::cout << "\033[33m";
-    } else {
-        std::cout << "\033[32m";
-    }
-    std::cout << getProgressBar(gpu_info.utilization_percent, 30) << " "
-              << std::fixed << std::setprecision(0) << gpu_info.utilization_percent << "%\033[0m\n";
-    
-    // Temperature & Power
-    std::cout << "  \033[1mTemp:\033[0m ";
-    if (gpu_info.temperature_c > 80) {
-        std::cout << "\033[31m";
-    } else if (gpu_info.temperature_c > 60) {
-        std::cout << "\033[33m";
-    } else {
-        std::cout << "\033[32m";
-    }
-    std::cout << gpu_info.temperature_c << " C\033[0m  ";
-    
-    std::cout << "\033[1mPower:\033[0m " << gpu_info.power_watts << " W\n";
 }
 
 void ConsoleUI::displayRunningModels(const std::vector<OllamaRunningModel>& models) {
+    clearLine();
     std::cout << "\n\033[1;35m";  // Magenta bold
-    std::cout << "=== Running Models ===\033[0m\n";
+    std::cout << "=== Running Models ===\033[0m";
+    clearLine();
+    std::cout << "\n";
     
     if (models.empty()) {
-        std::cout << "  \033[33mNo models currently loaded\033[0m\n";
+        std::cout << "  \033[33mNo models currently loaded\033[0m";
+        clearLine();
+        std::cout << "\n";
         return;
     }
     
@@ -205,7 +247,9 @@ void ConsoleUI::displayRunningModels(const std::vector<OllamaRunningModel>& mode
               << std::setw(12) << "PARAMS"
               << std::setw(10) << "QUANT"
               << std::setw(12) << "EXPIRES"
-              << "\033[0m\n";
+              << "\033[0m";
+    clearLine();
+    std::cout << "\n";
     
     for (const auto& model : models) {
         std::cout << "  \033[32m" << std::left
@@ -214,17 +258,23 @@ void ConsoleUI::displayRunningModels(const std::vector<OllamaRunningModel>& mode
                   << std::setw(12) << formatBytes(model.size)
                   << std::setw(12) << model.details.parameter_size
                   << std::setw(10) << model.details.quantization_level
-                  << std::setw(12) << formatTimeUntil(model.expires_at)
-                  << "\n";
+                  << std::setw(12) << formatTimeUntil(model.expires_at);
+        clearLine();
+        std::cout << "\n";
     }
 }
 
 void ConsoleUI::displayAvailableModels(const std::vector<OllamaModel>& models) {
+    clearLine();
     std::cout << "\n\033[1;34m";  // Blue bold
-    std::cout << "=== Available Models (" << models.size() << ") ===\033[0m\n";
+    std::cout << "=== Available Models (" << models.size() << ") ===\033[0m";
+    clearLine();
+    std::cout << "\n";
     
     if (models.empty()) {
-        std::cout << "  \033[33mNo models installed\033[0m\n";
+        std::cout << "  \033[33mNo models installed\033[0m";
+        clearLine();
+        std::cout << "\n";
         return;
     }
     
@@ -235,27 +285,39 @@ void ConsoleUI::displayAvailableModels(const std::vector<OllamaModel>& models) {
     std::cout << "  \033[4m" << std::left
               << std::setw(35) << "MODEL"
               << std::setw(12) << "SIZE"
-              << "\033[0m\n";
+              << "\033[0m";
+    clearLine();
+    std::cout << "\n";
     
     for (size_t i = 0; i < display_count; i++) {
         const auto& model = models[i];
         std::cout << "  " << std::left
                   << std::setw(35) << truncateString(model.name, 34)
-                  << std::setw(12) << formatBytes(model.size)
-                  << "\n";
+                  << std::setw(12) << formatBytes(model.size);
+        clearLine();
+        std::cout << "\n";
     }
     
     if (models.size() > 10) {
-        std::cout << "  \033[90m... and " << (models.size() - 10) << " more\033[0m\n";
+        std::cout << "  \033[90m... and " << (models.size() - 10) << " more\033[0m";
+        clearLine();
+        std::cout << "\n";
     }
 }
 
 void ConsoleUI::displayOllamaInfo(const std::unique_ptr<OllamaStatus>& status) {
     if (!status) {
+        clearLine();
         std::cout << "\n\033[1;31m";
-        std::cout << "=== Ollama Status ===\033[0m\n";
-        std::cout << "  \033[31mCannot connect to Ollama server\033[0m\n";
-        std::cout << "  \033[90mMake sure Ollama is running (ollama serve)\033[0m\n";
+        std::cout << "=== Ollama Status ===\033[0m";
+        clearLine();
+        std::cout << "\n";
+        std::cout << "  \033[31mCannot connect to Ollama server\033[0m";
+        clearLine();
+        std::cout << "\n";
+        std::cout << "  \033[90mMake sure Ollama is running (ollama serve)\033[0m";
+        clearLine();
+        std::cout << "\n";
         return;
     }
     
@@ -264,16 +326,21 @@ void ConsoleUI::displayOllamaInfo(const std::unique_ptr<OllamaStatus>& status) {
 
 void ConsoleUI::display(const DisplayInfo& info) {
     if (!no_clear_) {
-        clearScreen();
+        // Move cursor to home position without clearing - prevents flicker
+        moveCursorHome();
     }
     
     // Header
     std::cout << "\033[1;37;44m";  // White on blue
     std::cout << " OLLAMA MONITOR                                              ";
-    std::cout << getCurrentTime() << " \033[0m\n\n";
+    std::cout << getCurrentTime() << " \033[0m";
+    clearLine();
+    std::cout << "\n";
+    clearLine();
+    std::cout << "\n";
     
     // GPU Information
-    displayGPUInfo(info.gpu_info);
+    displayGPUInfo(info.gpu_infos);
     
     // Ollama Status
     displayOllamaInfo(info.ollama_status);
@@ -282,6 +349,12 @@ void ConsoleUI::display(const DisplayInfo& info) {
     displayAvailableModels(info.available_models);
     
     // Footer
+    clearLine();
     std::cout << "\n\033[90mPress Ctrl+C to exit | Refreshing every " 
-              << refresh_rate_ << "s\033[0m\n";
+              << refresh_rate_ << "s\033[0m";
+    clearLine();
+    std::cout << "\n";
+    
+    // Clear any remaining content below (from previous frames with more content)
+    clearToEndOfScreen();
 }

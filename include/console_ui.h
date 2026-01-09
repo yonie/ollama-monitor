@@ -6,7 +6,7 @@
 #include "gpu_monitor.h"
 
 struct DisplayInfo {
-    GPUInfo gpu_info;
+    std::vector<GPUInfo> gpu_infos;
     std::unique_ptr<OllamaStatus> ollama_status;
     std::vector<OllamaModel> available_models;
     std::string current_time;
@@ -17,7 +17,9 @@ public:
     ConsoleUI();
     ~ConsoleUI();
     
-    void clearScreen();
+    void moveCursorHome();
+    void clearToEndOfScreen();
+    void clearLine();
     void display(const DisplayInfo& info);
     void refreshRate(int seconds) { refresh_rate_ = seconds; }
     void setNoClear(bool no_clear) { no_clear_ = no_clear; }
@@ -33,7 +35,7 @@ private:
     std::string getCurrentTime() const;
     std::string getProgressBar(double percentage, int width = 20) const;
     
-    void displayGPUInfo(const GPUInfo& gpu_info);
+    void displayGPUInfo(const std::vector<GPUInfo>& gpu_infos);
     void displayOllamaInfo(const std::unique_ptr<OllamaStatus>& status);
     void displayRunningModels(const std::vector<OllamaRunningModel>& models);
     void displayAvailableModels(const std::vector<OllamaModel>& models);

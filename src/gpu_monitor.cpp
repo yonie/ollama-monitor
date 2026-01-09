@@ -19,6 +19,7 @@ typedef enum { NVML_TEMPERATURE_GPU = 0 } nvmlTemperatureSensors_t;
 // Function pointer types
 typedef nvmlReturn_t (*nvmlInit_t)(void);
 typedef nvmlReturn_t (*nvmlShutdown_t)(void);
+typedef nvmlReturn_t (*nvmlDeviceGetCount_t)(unsigned int*);
 typedef nvmlReturn_t (*nvmlDeviceGetHandleByIndex_t)(unsigned int, nvmlDevice_t*);
 typedef nvmlReturn_t (*nvmlDeviceGetName_t)(nvmlDevice_t, char*, unsigned int);
 typedef nvmlReturn_t (*nvmlDeviceGetMemoryInfo_t)(nvmlDevice_t, nvmlMemory_t*);
@@ -28,9 +29,9 @@ typedef nvmlReturn_t (*nvmlDeviceGetPowerUsage_t)(nvmlDevice_t, unsigned int*);
 
 // Global NVML state
 static HMODULE g_nvmlDll = nullptr;
-static nvmlDevice_t g_nvmlDevice = nullptr;
 static nvmlInit_t g_nvmlInit = nullptr;
 static nvmlShutdown_t g_nvmlShutdown = nullptr;
+static nvmlDeviceGetCount_t g_nvmlDeviceGetCount = nullptr;
 static nvmlDeviceGetHandleByIndex_t g_nvmlDeviceGetHandleByIndex = nullptr;
 static nvmlDeviceGetName_t g_nvmlDeviceGetName = nullptr;
 static nvmlDeviceGetMemoryInfo_t g_nvmlDeviceGetMemoryInfo = nullptr;
@@ -53,6 +54,8 @@ static bool loadNvmlFunctions() {
     if (!g_nvmlInit) g_nvmlInit = (nvmlInit_t)GetProcAddress(g_nvmlDll, "nvmlInit");
     
     g_nvmlShutdown = (nvmlShutdown_t)GetProcAddress(g_nvmlDll, "nvmlShutdown");
+    g_nvmlDeviceGetCount = (nvmlDeviceGetCount_t)GetProcAddress(g_nvmlDll, "nvmlDeviceGetCount_v2");
+    if (!g_nvmlDeviceGetCount) g_nvmlDeviceGetCount = (nvmlDeviceGetCount_t)GetProcAddress(g_nvmlDll, "nvmlDeviceGetCount");
     g_nvmlDeviceGetHandleByIndex = (nvmlDeviceGetHandleByIndex_t)GetProcAddress(g_nvmlDll, "nvmlDeviceGetHandleByIndex");
     g_nvmlDeviceGetName = (nvmlDeviceGetName_t)GetProcAddress(g_nvmlDll, "nvmlDeviceGetName");
     g_nvmlDeviceGetMemoryInfo = (nvmlDeviceGetMemoryInfo_t)GetProcAddress(g_nvmlDll, "nvmlDeviceGetMemoryInfo");
@@ -60,7 +63,7 @@ static bool loadNvmlFunctions() {
     g_nvmlDeviceGetTemperature = (nvmlDeviceGetTemperature_t)GetProcAddress(g_nvmlDll, "nvmlDeviceGetTemperature");
     g_nvmlDeviceGetPowerUsage = (nvmlDeviceGetPowerUsage_t)GetProcAddress(g_nvmlDll, "nvmlDeviceGetPowerUsage");
     
-    if (!g_nvmlInit || !g_nvmlShutdown || !g_nvmlDeviceGetHandleByIndex) {
+    if (!g_nvmlInit || !g_nvmlShutdown || !g_nvmlDeviceGetHandleByIndex || !g_nvmlDeviceGetCount) {
         FreeLibrary(g_nvmlDll);
         g_nvmlDll = nullptr;
         return false;
@@ -71,7 +74,7 @@ static bool loadNvmlFunctions() {
 
 #endif // _WIN32
 
-GPUMonitor::GPUMonitor() : initialized_(false) {
+GPUMonitor::GPUMonitor() : initialized_(false), gpu_count_(0) {
 #ifdef _WIN32
     initialized_ = initializeNVML();
 #endif
@@ -100,18 +103,25 @@ bool GPUMonitor::initializeNVML() {
         return false;
     }
     
-    result = g_nvmlDeviceGetHandleByIndex(0, &g_nvmlDevice);
-    if (result != NVML_SUCCESS) {
+    // Get the number of GPUs
+    unsigned int deviceCount = 0;
+    result = g_nvmlDeviceGetCount(&deviceCount);
+    if (result != NVML_SUCCESS || deviceCount == 0) {
         g_nvmlShutdown();
         FreeLibrary(g_nvmlDll);
         g_nvmlDll = nullptr;
         return false;
     }
     
+    gpu_count_ = static_cast<int>(deviceCount);
     return true;
 #else
     return false;
 #endif
+}
+
+int GPUMonitor::getGPUCount() const {
+    return gpu_count_;
 }
 
 void GPUMonitor::cleanupNVML() {
@@ -131,19 +141,27 @@ bool GPUMonitor::update() {
     return initialized_;
 }
 
-GPUInfo GPUMonitor::getGPUInfo() {
-    GPUInfo info;
+std::vector<GPUInfo> GPUMonitor::getGPUInfo() {
+    std::vector<GPUInfo> infos;
     
 #ifdef _WIN32
     if (!initialized_ || !g_nvmlDll) {
-        // Try DXGI fallback for basic info
+        // Try DXGI fallback for basic info - enumerate all adapters
         IDXGIFactory* pFactory = nullptr;
         if (SUCCEEDED(CreateDXGIFactory(__uuidof(IDXGIFactory), (void**)&pFactory))) {
             IDXGIAdapter* pAdapter = nullptr;
-            if (SUCCEEDED(pFactory->EnumAdapters(0, &pAdapter))) {
+            for (UINT i = 0; pFactory->EnumAdapters(i, &pAdapter) != DXGI_ERROR_NOT_FOUND; i++) {
                 DXGI_ADAPTER_DESC desc;
                 if (SUCCEEDED(pAdapter->GetDesc(&desc))) {
+                    // Skip software adapters (like Microsoft Basic Render Driver)
+                    if (desc.VendorId == 0x1414 && desc.DeviceId == 0x8c) {
+                        pAdapter->Release();
+                        continue;
+                    }
+                    
+                    GPUInfo info;
                     info.available = true;
+                    info.index = static_cast<int>(i);
                     
                     // Convert wide string to narrow
                     char name[128];
@@ -155,58 +173,73 @@ GPUInfo GPUMonitor::getGPUInfo() {
                     // Note: DXGI doesn't give current usage, only total
                     info.used_vram_gb = 0;
                     info.free_vram_gb = info.total_vram_gb;
+                    
+                    infos.push_back(info);
                 }
                 pAdapter->Release();
             }
             pFactory->Release();
         }
-        return info;
+        return infos;
     }
     
-    info.available = true;
-    
-    // Get GPU name
-    if (g_nvmlDeviceGetName) {
-        char name[NVML_DEVICE_NAME_BUFFER_SIZE];
-        if (g_nvmlDeviceGetName(g_nvmlDevice, name, NVML_DEVICE_NAME_BUFFER_SIZE) == NVML_SUCCESS) {
-            info.name = name;
+    // NVML path - enumerate all GPUs
+    for (int i = 0; i < gpu_count_; i++) {
+        GPUInfo info;
+        info.index = i;
+        
+        nvmlDevice_t device;
+        if (g_nvmlDeviceGetHandleByIndex(static_cast<unsigned int>(i), &device) != NVML_SUCCESS) {
+            continue;
         }
-    }
-    
-    // Get memory info
-    if (g_nvmlDeviceGetMemoryInfo) {
-        nvmlMemory_t memory;
-        if (g_nvmlDeviceGetMemoryInfo(g_nvmlDevice, &memory) == NVML_SUCCESS) {
-            info.total_vram_gb = static_cast<double>(memory.total) / (1024.0 * 1024.0 * 1024.0);
-            info.used_vram_gb = static_cast<double>(memory.used) / (1024.0 * 1024.0 * 1024.0);
-            info.free_vram_gb = static_cast<double>(memory.free) / (1024.0 * 1024.0 * 1024.0);
+        
+        info.available = true;
+        
+        // Get GPU name
+        if (g_nvmlDeviceGetName) {
+            char name[NVML_DEVICE_NAME_BUFFER_SIZE];
+            if (g_nvmlDeviceGetName(device, name, NVML_DEVICE_NAME_BUFFER_SIZE) == NVML_SUCCESS) {
+                info.name = name;
+            }
         }
-    }
-    
-    // Get GPU utilization
-    if (g_nvmlDeviceGetUtilizationRates) {
-        nvmlUtilization_t utilization;
-        if (g_nvmlDeviceGetUtilizationRates(g_nvmlDevice, &utilization) == NVML_SUCCESS) {
-            info.utilization_percent = static_cast<double>(utilization.gpu);
+        
+        // Get memory info
+        if (g_nvmlDeviceGetMemoryInfo) {
+            nvmlMemory_t memory;
+            if (g_nvmlDeviceGetMemoryInfo(device, &memory) == NVML_SUCCESS) {
+                info.total_vram_gb = static_cast<double>(memory.total) / (1024.0 * 1024.0 * 1024.0);
+                info.used_vram_gb = static_cast<double>(memory.used) / (1024.0 * 1024.0 * 1024.0);
+                info.free_vram_gb = static_cast<double>(memory.free) / (1024.0 * 1024.0 * 1024.0);
+            }
         }
-    }
-    
-    // Get temperature
-    if (g_nvmlDeviceGetTemperature) {
-        unsigned int temp;
-        if (g_nvmlDeviceGetTemperature(g_nvmlDevice, NVML_TEMPERATURE_GPU, &temp) == NVML_SUCCESS) {
-            info.temperature_c = static_cast<int>(temp);
+        
+        // Get GPU utilization
+        if (g_nvmlDeviceGetUtilizationRates) {
+            nvmlUtilization_t utilization;
+            if (g_nvmlDeviceGetUtilizationRates(device, &utilization) == NVML_SUCCESS) {
+                info.utilization_percent = static_cast<double>(utilization.gpu);
+            }
         }
-    }
-    
-    // Get power usage
-    if (g_nvmlDeviceGetPowerUsage) {
-        unsigned int power;
-        if (g_nvmlDeviceGetPowerUsage(g_nvmlDevice, &power) == NVML_SUCCESS) {
-            info.power_watts = static_cast<int>(power / 1000); // Convert from milliwatts
+        
+        // Get temperature
+        if (g_nvmlDeviceGetTemperature) {
+            unsigned int temp;
+            if (g_nvmlDeviceGetTemperature(device, NVML_TEMPERATURE_GPU, &temp) == NVML_SUCCESS) {
+                info.temperature_c = static_cast<int>(temp);
+            }
         }
+        
+        // Get power usage
+        if (g_nvmlDeviceGetPowerUsage) {
+            unsigned int power;
+            if (g_nvmlDeviceGetPowerUsage(device, &power) == NVML_SUCCESS) {
+                info.power_watts = static_cast<int>(power / 1000); // Convert from milliwatts
+            }
+        }
+        
+        infos.push_back(info);
     }
 #endif
     
-    return info;
+    return infos;
 }

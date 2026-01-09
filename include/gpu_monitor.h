@@ -1,9 +1,11 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 struct GPUInfo {
     bool available = false;
+    int index = 0;
     std::string name;
     double total_vram_gb = 0.0;
     double used_vram_gb = 0.0;
@@ -26,11 +28,13 @@ public:
     ~GPUMonitor();
     
     bool isAvailable() const;
-    GPUInfo getGPUInfo();
+    std::vector<GPUInfo> getGPUInfo();
+    int getGPUCount() const;
     bool update();
 
 private:
     bool initialized_;
+    int gpu_count_;
     
     bool initializeNVML();
     void cleanupNVML();

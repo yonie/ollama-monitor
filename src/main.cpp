@@ -83,7 +83,7 @@ int main(int argc, char* argv[]) {
         DisplayInfo info;
         
         // Gather GPU information
-        info.gpu_info = gpu_monitor.getGPUInfo();
+        info.gpu_infos = gpu_monitor.getGPUInfo();
         
         // Gather Ollama information
         info.ollama_status = ollama_client.getStatus();
