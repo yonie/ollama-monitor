@@ -6,7 +6,7 @@ A lightweight, console-based monitoring tool for [Ollama](https://ollama.ai/) on
 
 ## Features
 
-- **GPU Monitoring**: Real-time VRAM usage, GPU utilization, temperature, and power consumption
+- **GPU Monitoring**: Real-time VRAM usage, GPU utilization, temperature, and power consumption (full metrics for NVIDIA; basic support for AMD/Intel)
 - **Ollama Integration**: View running models, loaded context, and available models
 - **Lightweight**: Native Windows application with no external dependencies
 - **Top-style UI**: Clean, color-coded console interface with auto-refresh
@@ -14,7 +14,7 @@ A lightweight, console-based monitoring tool for [Ollama](https://ollama.ai/) on
 ## Requirements
 
 - Windows 10/11
-- NVIDIA GPU (for full GPU monitoring; basic info available for other GPUs via DXGI)
+- NVIDIA GPU recommended (for full GPU monitoring); AMD/Intel GPUs supported with basic info via DXGI
 - [Ollama](https://ollama.ai/) installed and running
 - Visual Studio 2022 Build Tools or Visual Studio 2022 (for building)
 - CMake 3.20+
@@ -77,10 +77,15 @@ ollama-monitor --once --no-clear
  OLLAMA MONITOR                                              2026-01-09 19:36:07
 
 === GPU Status ===
-  GPU: NVIDIA GeForce RTX 5060 Ti
+  GPU 0: NVIDIA GeForce RTX 5090
   VRAM: [||||||                        ] 25.3% (4.03/15.93 GB)
   Util: [||||||||||||                  ] 42%
   Temp: 62 C  Power: 145 W
+
+  GPU 1: NVIDIA GeForce RTX 4080
+  VRAM: [|||                           ] 12.1% (1.94/16.00 GB)
+  Util: [||                            ] 8%
+  Temp: 45 C  Power: 35 W
 
 === Running Models ===
   MODEL                         SIZE        PARAMS      QUANT     EXPIRES
@@ -101,14 +106,30 @@ Press Ctrl+C to exit | Refreshing every 1s
 
 ### GPU Monitoring
 
-The application dynamically loads `nvml.dll` from the NVIDIA driver (no CUDA toolkit required). This provides:
+The application supports multiple GPUs and will display all detected graphics cards.
+
+#### NVIDIA GPUs (Full Support)
+
+Dynamically loads `nvml.dll` from the NVIDIA driver (no CUDA toolkit required). This provides:
 - GPU name and model
 - VRAM total/used/free
 - GPU utilization percentage
 - Temperature
 - Power consumption
 
-For non-NVIDIA GPUs, it falls back to DXGI which provides basic GPU name and total VRAM.
+#### AMD / Intel / Other GPUs (Basic Support)
+
+Falls back to DXGI which provides:
+- GPU name and model
+- Total VRAM
+
+**Not available via DXGI:**
+- Current VRAM usage (shows 0%)
+- GPU utilization
+- Temperature
+- Power consumption
+
+This is a limitation of the DXGI API itself. Full support for AMD GPUs would require integrating AMD's ADL (AMD Display Library) SDK, and Intel GPUs would need Intel's IGCL or Level Zero API. Contributions welcome!
 
 ### Ollama Integration
 
