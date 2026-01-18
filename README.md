@@ -174,3 +174,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - [nvtop](https://github.com/Syllo/nvtop) - Linux GPU monitoring
 - [btop](https://github.com/aristocratos/btop) - Linux system monitor
+
+## Support
+
+If you find this tool helpful, consider buying me a coffee!
+
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?style=flat&logo=buy-me-a-coffee)](https://buymeacoffee.com/yonie)
